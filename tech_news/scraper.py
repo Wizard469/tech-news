@@ -1,6 +1,7 @@
 import requests
 from time import sleep
 from parsel import Selector
+from tech_news.database import create_news
 
 
 # Requisito 1
@@ -13,7 +14,7 @@ def fetch(url):
             return None
 
         return response.text
-    except requests.ReadTimeout:
+    except (requests.ReadTimeout, requests.exceptions.TooManyRedirects):
         return None
 
 
@@ -21,60 +22,63 @@ def fetch(url):
 def scrape_updates(html_content):
     selector = Selector(text=html_content)
 
-    news_urls = selector.css('.entry-title a::attr(href)').getall()
-
-    if not news_urls:
-        return []
-
-    return news_urls
+    return selector.css(".entry-title a::attr(href)").getall()
 
 
 # Requisito 3
 def scrape_next_page_link(html_content):
     selector = Selector(text=html_content)
 
-    next_page_url = selector.css('.next.page-numbers::attr(href)').get()
-
-    if not next_page_url:
-        return None
-
-    return next_page_url
+    return selector.css(".next.page-numbers::attr(href)").get()
 
 
 # Requisito 4
 def scrape_news(html_content):
+    if not isinstance(html_content, str):
+        return None
+
     selector = Selector(text=html_content)
 
     url = selector.css("link[rel='canonical']::attr(href)").get()
-    title = selector.css('h1.entry-title::text').get().replace("\xa0", "")
-    timestamp = selector.css('li.meta-date::text').get()
-    writer = selector.css('.author a::text').get()
-    reading_time = selector.css('.meta-reading-time::text').re_first(r'\d+')
+    title = selector.css("h1.entry-title::text").get().rstrip()
+    timestamp = selector.css("li.meta-date::text").get()
+    writer = selector.css(".author a::text").get()
+    reading_time = int(
+        selector.css(".meta-reading-time::text").re_first(r"\d+") or 0
+    )
     first_paragraph = selector.css(
-        '.entry-content > p:first-of-type *::text'
+        ".entry-content > p:first-of-type *::text"
     ).getall()
-    category = selector.css('.label::text').get()
+    category = selector.css(".label::text").get()
 
-    summary = "".join(first_paragraph).replace("\xa0", "")
-
-    suffix = " "
-    if title.endswith(suffix):
-        # title = title[:-len(suffix)]
-        title = title.removesuffix(suffix)
-    if summary.endswith(suffix):
-        summary = summary.removesuffix(suffix)
+    summary = "".join(first_paragraph).rstrip()
 
     return {
         "url": url,
         "title": title,
         "timestamp": timestamp,
         "writer": writer,
-        "reading_time": int(reading_time),
+        "reading_time": reading_time,
         "summary": summary,
-        "category": category
+        "category": category,
     }
 
 
 # Requisito 5
 def get_tech_news(amount):
-    """Seu código deve vir aqui"""
+    updates_url = "https://blog.betrybe.com/"
+    all_news = []
+
+    while len(all_news) < amount:
+        html_content = fetch(updates_url)
+        new_urls = scrape_updates(html_content)
+        updates_url = scrape_next_page_link(html_content)
+
+        for url in new_urls:
+            if len(all_news) < amount:
+                html_content = fetch(url)
+                all_news.append(scrape_news(html_content))
+
+    create_news(all_news)
+
+    return all_news
